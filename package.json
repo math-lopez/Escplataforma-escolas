@@ -1,0 +1,13 @@
+{
+  "name": "escplataforma-escolas",
+  "private": true,
+  "version": "0.0.1",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev:frontend": "npm run dev --workspace frontend",
+    "dev:backend": "npm run dev --workspace backend"
+  }
+}
