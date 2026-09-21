@@ -2,10 +2,12 @@ const apiUrl = import.meta.env.VITE_API_URL as string;
 
 export class ApiError extends Error {
   status: number;
+  data?: unknown;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, data?: unknown) {
     super(message);
     this.status = status;
+    this.data = data;
   }
 }
 
@@ -23,7 +25,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (!response.ok) {
     const corpo = await response.json().catch(() => ({}));
-    throw new ApiError(corpo.erro ?? `Erro na requisição: ${response.status}`, response.status);
+    throw new ApiError(corpo.erro ?? `Erro na requisição: ${response.status}`, response.status, corpo);
   }
 
   return response.json() as Promise<T>;
@@ -35,5 +37,7 @@ export const api = {
     request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
+  put: <T>(path: string, body: unknown) =>
+    request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };

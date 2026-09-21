@@ -1,111 +1,207 @@
+@import "tailwindcss";
+
+/*
+ * Tokens do DESIGN.md como variáveis de tema do Tailwind v4.
+ *
+ * Cada entrada aqui vira utilitário Tailwind com o MESMO nome do token
+ * (ex: `--color-primary` -> `bg-primary`/`text-primary`, `--radius-full` ->
+ * `rounded-full`, `--text-heading-lg` -> `text-heading-lg`). Não traduza os
+ * nomes: o DESIGN.md pede para referenciar os tokens diretamente.
+ *
+ * `--color-primary` e `--color-on-primary` são as DUAS variáveis que o
+ * TemaProvider (src/features/tema) sobrescreve em runtime com a cor da
+ * instituição depois do login — por isso os valores abaixo (o cobalto do
+ * DESIGN.md) são o default das telas anônimas, não uma constante compilada.
+ * Ver src/features/tema/TemaProvider.tsx e src/lib/contraste.ts.
+ */
+@theme {
+  /* ===== Cores — marca e accent ===== */
+  --color-primary: #0064e0;
+  --color-primary-deep: #0457cb;
+  --color-primary-soft: #0091ff;
+  --color-on-primary: #ffffff;
+  --color-ink-button: #000000;
+  --color-on-ink-button: #ffffff;
+  --color-fb-blue: #1876f2;
+  --color-meta-link: #385898;
+  --color-oculus-purple: #a121ce;
+
+  /* ===== Cores — semânticas ===== */
+  --color-success: #31a24c;
+  --color-success-bg: #24e400;
+  --color-attention: #f2a918;
+  --color-warning: #f7b928;
+  --color-warning-bg: #ffe200;
+  --color-critical: #e41e3f;
+  --color-critical-strong: #f0284a;
+
+  /* ===== Cores — superfície e texto ===== */
+  --color-canvas: #ffffff;
+  --color-surface-soft: #f1f4f7;
+  --color-ink-deep: #0a1317;
+  --color-ink: #1c1e21;
+  --color-charcoal: #444950;
+  --color-slate: #4b4c4f;
+  --color-steel: #5d6c7b;
+  --color-stone: #8595a4;
+  --color-hairline: #ced0d4;
+  --color-hairline-soft: #dee3e9;
+  --color-disabled-text: #bcc0c4;
+
+  /* ===== Tipografia =====
+   * DESIGN.md especifica "Optimistic VF" (fonte proprietária da Meta, sem
+   * licenciamento público). Usamos o fallback que o próprio DESIGN.md lista:
+   * Montserrat, Helvetica, Arial, Noto Sans (carregada via Google Fonts no
+   * index.html). Os features OpenType `ss01`/`ss02` do DESIGN.md não existem
+   * no Montserrat e por isso NÃO são aplicados — desvio consciente do IDS,
+   * registrado também no PLANO-MVP.md §6.1.
+   */
+  --font-sans: "Montserrat", Helvetica, Arial, "Noto Sans", sans-serif;
+
+  --text-hero-display: 64px;
+  --text-hero-display--line-height: 1.16;
+  --text-hero-display--font-weight: 500;
+
+  --text-display-lg: 48px;
+  --text-display-lg--line-height: 1.17;
+  --text-display-lg--font-weight: 500;
+
+  --text-heading-lg: 36px;
+  --text-heading-lg--line-height: 1.28;
+  --text-heading-lg--font-weight: 500;
+
+  --text-heading-md: 28px;
+  --text-heading-md--line-height: 1.21;
+  --text-heading-md--font-weight: 300;
+
+  --text-heading-sm: 24px;
+  --text-heading-sm--line-height: 1.25;
+  --text-heading-sm--font-weight: 500;
+
+  --text-subtitle-lg: 18px;
+  --text-subtitle-lg--line-height: 1.44;
+  --text-subtitle-lg--font-weight: 700;
+
+  --text-subtitle-md: 18px;
+  --text-subtitle-md--line-height: 1.44;
+  --text-subtitle-md--font-weight: 400;
+
+  --text-body-md-bold: 16px;
+  --text-body-md-bold--line-height: 1.5;
+  --text-body-md-bold--letter-spacing: -0.16px;
+  --text-body-md-bold--font-weight: 700;
+
+  --text-body-md: 16px;
+  --text-body-md--line-height: 1.5;
+  --text-body-md--letter-spacing: -0.16px;
+  --text-body-md--font-weight: 400;
+
+  --text-body-sm-bold: 14px;
+  --text-body-sm-bold--line-height: 1.43;
+  --text-body-sm-bold--letter-spacing: -0.14px;
+  --text-body-sm-bold--font-weight: 700;
+
+  --text-body-sm: 14px;
+  --text-body-sm--line-height: 1.43;
+  --text-body-sm--letter-spacing: -0.14px;
+  --text-body-sm--font-weight: 400;
+
+  --text-caption-bold: 12px;
+  --text-caption-bold--line-height: 1.33;
+  --text-caption-bold--font-weight: 700;
+
+  --text-caption: 12px;
+  --text-caption--line-height: 1.33;
+  --text-caption--font-weight: 400;
+
+  --text-button-md: 14px;
+  --text-button-md--line-height: 1.43;
+  --text-button-md--letter-spacing: -0.14px;
+  --text-button-md--font-weight: 700;
+
+  --text-link-md: 16px;
+  --text-link-md--line-height: 1.5;
+  --text-link-md--letter-spacing: -0.16px;
+  --text-link-md--font-weight: 700;
+
+  /* ===== Spacing =====
+   * Substitui o passo padrão do Tailwind pela escala do DESIGN.md — os nomes
+   * viram utilitários (`p-xl`, `gap-lg`, `m-section` etc.) em vez dos números
+   * genéricos (`p-4`, `gap-5`) do Tailwind default.
+   */
+  --spacing-xxs: 4px;
+  --spacing-xs: 8px;
+  --spacing-sm: 10px;
+  --spacing-md: 12px;
+  --spacing-base: 16px;
+  --spacing-lg: 20px;
+  --spacing-xl: 24px;
+  --spacing-xxl: 32px;
+  --spacing-xxxl: 40px;
+  --spacing-section-sm: 48px;
+  --spacing-section: 64px;
+  --spacing-section-lg: 80px;
+  --spacing-hero: 120px;
+
+  /* ===== Border radius =====
+   * `full` (100px) é o pill dos botões/badges do DESIGN.md — diferente do
+   * `circle` (arredondamento total, usado em avatares/ícones circulares).
+   */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 16px;
+  --radius-xxl: 24px;
+  --radius-xxxl: 32px;
+  --radius-feature: 40px;
+  --radius-full: 100px;
+  --radius-circle: 9999px;
+
+  /* ===== Breakpoints =====
+   * Alinhados com a tabela de breakpoints do DESIGN.md (mobile pequeno <480,
+   * mobile grande 480–767, tablet 768–1023, desktop 1024–1359, wide ≥1360) —
+   * substituem os defaults do Tailwind (640/768/1024/1280) para que
+   * `sm:`/`md:`/`lg:`/`xl:` batam com a spec em vez de um grid genérico.
+   */
+  --breakpoint-sm: 480px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1360px;
+}
+
+/*
+ * O DESIGN.md não define tokens de dark mode ("Known Gaps"). Fixamos
+ * color-scheme: light para o navegador não aplicar UA-styling escura
+ * (inputs, scrollbars) por cima de uma paleta pensada só para claro.
+ */
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
-
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+@layer base {
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  #social .button-icon {
-    filter: invert(1) brightness(2);
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  p {
+    margin: 0;
   }
-}
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-}
-
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
+  /* Foco visível consistente para navegação por teclado, sem depender de hover. */
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
   }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
-}
-
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
-
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
 }

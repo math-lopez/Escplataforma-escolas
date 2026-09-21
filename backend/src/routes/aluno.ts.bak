@@ -1,0 +1,414 @@
+import type { FastifyInstance } from "fastify";
+import {
+  COLUNAS_AULA,
+  buscarAulaDaInstituicao,
+  paraApiAula,
+  type LinhaAula,
+} from "../services/conteudoCurso.js";
+import { urlDeReproducao } from "../services/bunny.js";
+
+// ── Rotas do ALUNO (área privada) ─────────────────────────────────────
+// Acesso: papel "aluno" apenas. Sem necessidade de service role.
+
+export default async function alunoRoutes(fastify: FastifyInstance) {
+  // GET /api/aluno/cursos — lista cursos em que o aluno está matriculado, com progresso
+  fastify.get(
+    "/api/aluno/cursos",
+    { onRequest: [fastify.exigirPapel("aluno")] },
+    async (request, reply) => {
+      const usuario = request.usuario!;
+
+      // R1 + R2: só cursos em que o aluno está MATRICULADO, de sua INSTITUIÇÃO
+      const { data, error } = await fastify
+        .supabaseComoUsuario(request.accessToken!)
+        .from("matriculas")
+        .select(
+          `
+          id,
+          curso_id,
+          status,
+          cursos!inner(id, titulo, descricao, capa_url, instituicao_id),
+          progresso_aulas(aula_id)
+        `
+        )
+        .eq("aluno_id", usuario.id)
+        .eq("cursos.instituicao_id", usuario.instituicaoId)
+        .eq("status", "ativa");
+
+      if (error) {
+        request.log.error(error);
+        return reply.code(500).send({ erro: "Não foi possível listar seus cursos" });
+      }
+
+      if (!data) {
+        return reply.code(200).send([]);
+      }
+
+      // Conta aulas por curso: uma query separada para cada matrícula
+      const cursosComProgresso = await Promise.all(
+        (data as unknown[]).map(async (matricula: any) => {
+          const cursoInfo = matricula.cursos;
+
+          // Conta total de aulas no curso: primeira busca todos os módulos, depois conta aulas
+          const { data: modulos, error: erroModulos } = await fastify
+            .supabaseComoUsuario(request.accessToken!)
+            .from("modulos")
+            .select("id")
+            .eq("curso_id", matricula.curso_id);
+
+          let totalAulas = 0;
+          if (!erroModulos && modulos) {
+            const moduloIds = (modulos as unknown as { id: string }[]).map((m) => m.id);
+            if (moduloIds.length > 0) {
+              // Agora conta aulas destes módulos
+              const { count, error: erroContagem } = await fastify
+                .supabaseComoUsuario(request.accessToken!)
+                .from("aulas")
+                .select("id", { count: "exact", head: true })
+                .in("modulo_id", moduloIds);
+
+              if (!erroContagem && count !== null) {
+                totalAulas = count;
+              }
+            }
+          }
+
+          // Aulas concluídas por este aluno neste curso
+          const aulasConcluidas = matricula.progresso_aulas?.length ?? 0;
+
+          return {
+            id: cursoInfo.id,
+            titulo: cursoInfo.titulo,
+            descricao: cursoInfo.descricao,
+            capaUrl: cursoInfo.capa_url,
+            matriculaId: matricula.id,
+            status: matricula.status,
+            totalAulas,
+            aulasConcluidas,
+          };
+        })
+      );
+
+      return cursosComProgresso;
+    }
+  );
+
+  // GET /api/aluno/cursos/:cursoId — detalhe do curso com módulos e aulas
+  fastify.get<{ Params: { cursoId: string } }>(
+    "/api/aluno/cursos/:cursoId",
+    { onRequest: [fastify.exigirPapel("aluno")] },
+    async (request, reply) => {
+      const usuario = request.usuario!;
+      const { cursoId } = request.params;
+
+      // R1: busca matrícula do aluno ATIVA neste curso
+      const { data: matriculaData, error: erroMatricula } = await fastify
+        .supabaseComoUsuario(request.accessToken!)
+        .from("matriculas")
+        .select("id, curso_id, status")
+        .eq("aluno_id", usuario.id)
+        .eq("curso_id", cursoId)
+        .eq("status", "ativa")
+        .single();
+
+      // Se não há matrícula ativa, simula "curso não encontrado" (não distinguir)
+      if (erroMatricula || !matriculaData) {
+        return reply.code(404).send({ erro: "Curso não encontrado" });
+      }
+
+      // R2: garante que o curso pertence à instituição do aluno via join
+      const { data: cursoData, error: erroCurso } = await fastify
+        .supabaseComoUsuario(request.accessToken!)
+        .from("cursos")
+        .select("id, titulo, descricao, instituicao_id")
+        .eq("id", cursoId)
+        .eq("instituicao_id", usuario.instituicaoId)
+        .single();
+
+      if (erroCurso || !cursoData) {
+        return reply.code(404).send({ erro: "Curso não encontrado" });
+      }
+
+      // Busca módulos e aulas do curso, ordenados
+      const { data: modulosData, error: erroModulos } = await fastify
+        .supabaseComoUsuario(request.accessToken!)
+        .from("modulos")
+        .select("id, titulo, ordem")
+        .eq("curso_id", cursoId)
+        .order("ordem", { ascending: true });
+
+      if (erroModulos) {
+        request.log.error(erroModulos);
+        return reply.code(500).send({ erro: "Não foi possível carregar o curso" });
+      }
+
+      // Para cada módulo, busca suas aulas e marca quais estão concluídas
+      const modulos = await Promise.all(
+        ((modulosData as unknown as { id: string; titulo: string; ordem: number }[]) || []).map(
+          async (modulo) => {
+            const { data: aulasData, error: erroAulas } = await fastify
+              .supabaseComoUsuario(request.accessToken!)
+              .from("aulas")
+              .select(COLUNAS_AULA)
+              .eq("modulo_id", modulo.id)
+              .order("ordem", { ascending: true });
+
+            if (erroAulas) {
+              request.log.error(erroAulas);
+              return {
+                id: modulo.id,
+                titulo: modulo.titulo,
+                ordem: modulo.ordem,
+                aulas: [],
+              };
+            }
+
+            // Busca progresso do aluno neste módulo (aulas concluídas)
+            const { data: progressoData, error: erroProgresso } = await fastify
+              .supabaseComoUsuario(request.accessToken!)
+              .from("progresso_aulas")
+              .select("aula_id, concluida")
+              .eq("matricula_id", matriculaData.id);
+
+            if (erroProgresso) {
+              request.log.error(erroProgresso);
+            }
+
+            const concluidas = new Set(
+              ((progressoData as unknown as { aula_id: string; concluida: boolean }[]) || [])
+                .filter((p) => p.concluida)
+                .map((p) => p.aula_id)
+            );
+
+            // `videoEmbedUrl` só é montada aqui (área do aluno), não em paraApiAula: o professor
+            // não reproduz vídeo no editor, e o helper depende de BUNNY_LIBRARY_ID, que é
+            // configuração de servidor. É null quando a Bunny não está configurada ou a aula
+            // ainda não tem vídeo — o frontend trata isso como "vídeo indisponível".
+            const aulas = (aulasData as unknown as LinhaAula[]).map((aula) => ({
+              ...paraApiAula(aula),
+              videoEmbedUrl: urlDeReproducao(aula.video_externo_id),
+              concluida: concluidas.has(aula.id),
+            }));
+
+            return {
+              id: modulo.id,
+              titulo: modulo.titulo,
+              ordem: modulo.ordem,
+              aulas,
+            };
+          }
+        )
+      );
+
+      return {
+        id: cursoData.id,
+        titulo: cursoData.titulo,
+        descricao: cursoData.descricao,
+        matriculaId: matriculaData.id,
+        modulos,
+      };
+    }
+  );
+
+  // POST /api/aluno/aulas/:aulaId/concluir — marca aula como concluída
+  fastify.post<{ Params: { aulaId: string } }>(
+    "/api/aluno/aulas/:aulaId/concluir",
+    { onRequest: [fastify.exigirPapel("aluno")] },
+    async (request, reply) => {
+      const usuario = request.usuario!;
+      const { aulaId } = request.params;
+
+      // R1: busca a aula e valida que pertence a um curso matriculado pelo aluno
+      const aula = await buscarAulaDaInstituicao(fastify, request.accessToken!, aulaId, usuario.instituicaoId);
+      if (!aula) {
+        return reply.code(404).send({ erro: "Aula não encontrada" });
+      }
+
+      // R3: encontra a matrícula DO ALUNO neste curso (via módulo -> curso)
+      const { data: moduloData, error: erroModulo } = await fastify
+        .supabaseComoUsuario(request.accessToken!)
+        .from("modulos")
+        .select("curso_id")
+        .eq("id", aula.modulo_id)
+        .single();
+
+      if (erroModulo || !moduloData) {
+        return reply.code(404).send({ erro: "Aula não encontrada" });
+      }
+
+      const { data: matriculaData, error: erroMatricula } = await fastify
+        .supabaseComoUsuario(request.accessToken!)
+        .from("matriculas")
+        .select("id")
+        .eq("aluno_id", usuario.id)
+        .eq("curso_id", (moduloData as unknown as { curso_id: string }).curso_id)
+        .eq("status", "ativa")
+        .single();
+
+      if (erroMatricula || !matriculaData) {
+        return reply.code(404).send({ erro: "Aula não encontrada" });
+      }
+
+      const matriculaId = (matriculaData as unknown as { id: string }).id;
+
+      // Upsert: marca aula como concluída para ESTA matrícula
+      const agora = new Date().toISOString();
+      const { data: progresso, error: erroProgresso } = await fastify
+        .supabaseComoUsuario(request.accessToken!)
+        .from("progresso_aulas")
+        .upsert(
+          {
+            matricula_id: matriculaId,
+            aula_id: aulaId,
+            concluida: true,
+            concluida_em: agora,
+          },
+          { onConflict: "matricula_id,aula_id" }
+        )
+        .select("aula_id, concluida, concluida_em")
+        .single();
+
+      if (erroProgresso || !progresso) {
+        request.log.error(erroProgresso);
+        return reply.code(500).send({ erro: "Não foi possível marcar a aula como concluída" });
+      }
+
+      const resultado = progresso as unknown as { aula_id: string; concluida: boolean; concluida_em: string };
+      return reply.code(200).send({
+        aulaId: resultado.aula_id,
+        concluida: resultado.concluida,
+        concluidaEm: resultado.concluida_em,
+      });
+    }
+  );
+
+  // DELETE /api/aluno/aulas/:aulaId/concluir — desmarca aula
+  fastify.delete<{ Params: { aulaId: string } }>(
+    "/api/aluno/aulas/:aulaId/concluir",
+    { onRequest: [fastify.exigirPapel("aluno")] },
+    async (request, reply) => {
+      const usuario = request.usuario!;
+      const { aulaId } = request.params;
+
+      // R1: valida que a aula pertence a um curso matriculado pelo aluno
+      const aula = await buscarAulaDaInstituicao(fastify, request.accessToken!, aulaId, usuario.instituicaoId);
+      if (!aula) {
+        return reply.code(404).send({ erro: "Aula não encontrada" });
+      }
+
+      // R3: encontra a matrícula DO ALUNO neste curso
+      const { data: moduloData, error: erroModulo } = await fastify
+        .supabaseComoUsuario(request.accessToken!)
+        .from("modulos")
+        .select("curso_id")
+        .eq("id", aula.modulo_id)
+        .single();
+
+      if (erroModulo || !moduloData) {
+        return reply.code(404).send({ erro: "Aula não encontrado" });
+      }
+
+      const { data: matriculaData, error: erroMatricula } = await fastify
+        .supabaseComoUsuario(request.accessToken!)
+        .from("matriculas")
+        .select("id")
+        .eq("aluno_id", usuario.id)
+        .eq("curso_id", (moduloData as unknown as { curso_id: string }).curso_id)
+        .eq("status", "ativa")
+        .single();
+
+      if (erroMatricula || !matriculaData) {
+        return reply.code(404).send({ erro: "Aula não encontrada" });
+      }
+
+      const matriculaId = (matriculaData as unknown as { id: string }).id;
+
+      // Delete: remove o progresso desta aula para ESTA matrícula
+      const { error: erroDelete } = await fastify
+        .supabaseComoUsuario(request.accessToken!)
+        .from("progresso_aulas")
+        .delete()
+        .eq("matricula_id", matriculaId)
+        .eq("aula_id", aulaId);
+
+      if (erroDelete) {
+        request.log.error(erroDelete);
+        return reply.code(500).send({ erro: "Não foi possível desmarcar a aula" });
+      }
+
+      return reply.code(204).send();
+    }
+  );
+
+  // GET /api/aluno/aulas/:aulaId/material — gera URL assinada de leitura para PDF da aula
+  fastify.get<{ Params: { aulaId: string } }>(
+    "/api/aluno/aulas/:aulaId/material",
+    { onRequest: [fastify.exigirPapel("aluno")] },
+    async (request, reply) => {
+      const usuario = request.usuario!;
+      const { aulaId } = request.params;
+
+      // R1: busca a aula e valida que pertence a um curso matriculado pelo aluno
+      const aula = await buscarAulaDaInstituicao(fastify, request.accessToken!, aulaId, usuario.instituicaoId);
+      if (!aula) {
+        return reply.code(404).send({ erro: "Aula não encontrada" });
+      }
+
+      // R2: verifica se é aula do tipo pdf e tem conteudo_url
+      if (aula.tipo !== "pdf") {
+        return reply.code(404).send({ erro: "Esta aula não possui material disponível" });
+      }
+
+      if (!aula.conteudo_url) {
+        return reply.code(404).send({ erro: "Esta aula não possui material disponível" });
+      }
+
+      // R3: encontra a matrícula DO ALUNO neste curso (mesma lógica de concluir)
+      const { data: moduloData, error: erroModulo } = await fastify
+        .supabaseComoUsuario(request.accessToken!)
+        .from("modulos")
+        .select("curso_id")
+        .eq("id", aula.modulo_id)
+        .single();
+
+      if (erroModulo || !moduloData) {
+        return reply.code(404).send({ erro: "Aula não encontrada" });
+      }
+
+      const { data: matriculaData, error: erroMatricula } = await fastify
+        .supabaseComoUsuario(request.accessToken!)
+        .from("matriculas")
+        .select("id")
+        .eq("aluno_id", usuario.id)
+        .eq("curso_id", (moduloData as unknown as { curso_id: string }).curso_id)
+        .eq("status", "ativa")
+        .single();
+
+      if (erroMatricula || !matriculaData) {
+        return reply.code(404).send({ erro: "Aula não encontrada" });
+      }
+
+      // R4: gera signed URL para leitura — 300 segundos (5 minutos) de expiração
+      // Usa sempre o caminho vindo do banco (aula.conteudo_url), nunca qualquer valor da requisição
+      const cliente = fastify.supabaseComoUsuario(request.accessToken!);
+      const { data, error } = await cliente
+        .storage
+        .from("materiais")
+        .createSignedUrl(aula.conteudo_url, 300);
+
+      if (error || !data) {
+        request.log.error(error);
+        return reply.code(500).send({ erro: "Não foi possível gerar o link de download" });
+      }
+
+      // Calcula expiraEm: agora + 300 segundos
+      const agora = new Date();
+      const expiraEm = new Date(agora.getTime() + 300 * 1000).toISOString();
+
+      return reply.code(200).send({
+        url: data.signedUrl,
+        expiraEm,
+      });
+    }
+  );
+}

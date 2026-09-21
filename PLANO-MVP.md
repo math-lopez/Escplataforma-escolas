@@ -151,7 +151,33 @@ Buckets do Supabase Storage (`materiais`, `branding`) + policies de acesso por i
 
 Ordem otimizada para o cenário de estreia: **você monta um curso de verdade o quanto antes**.
 
-### Fatia 0 — Fundação de UI + débitos
+### Fatia 0 — Fundação de UI + débitos ✅ CONCLUÍDA
+
+Executada por três agentes em paralelo (backend, frontend, migrations), com gates de
+orquestração entre cada round. Sete defeitos foram encontrados na revisão — **nenhum deles
+detectável por typecheck, lint ou teste**:
+
+1. Comentário de migration afirmava uma garantia de segurança que não existia (usuário pendente
+   continuava com acesso via 7 policies que chaveiam em `auth.uid()`, não nos helpers).
+2. Cast `::uuid` em policy de storage derrubaria a listagem inteira diante de um único caminho
+   fora da convenção.
+3. `cursos_select_publicado` (0008) não filtra por instituição — leitura de curso publicado é
+   cross-tenant por RLS. Comportamento mantido (a página pública depende dele), mas agora
+   documentado: **toda rota de curso precisa filtrar `instituicao_id` no backend**.
+4. Bug de costura entre agentes: o backend passou a ler perfil com RLS enquanto a migration
+   passou a anular `instituicao_atual()` para usuário não-ativo — resultado seria 401 espúrio
+   derrubando a sessão no fluxo de `auto_aprovacao`. Corrigido com a policy
+   `usuarios_select_propria_linha`.
+5. `TemaProvider` validava a cor do tenant só na metade da equação (texto sim, fundo não),
+   produzindo exatamente a combinação ilegível que o helper existia para impedir.
+6. Guard arquitetural varria só `src/routes/`, deixando `src/services/` — onde a Fatia 1 vai
+   escrever a lógica de negócio — descoberto.
+7. Rota de login duplicava o carregamento de perfil e já havia divergido do plugin.
+
+**Lição para as próximas fatias:** os defeitos de maior impacto vieram da *costura* entre
+frentes, não de dentro delas. Cada agente estava correto no próprio escopo.
+
+
 - Tailwind v4; tokens do `DESIGN.md` como CSS variables em `index.css`
 - Fonte **Montserrat** (Optimistic VF é proprietária da Meta — ver §6.1)
 - Componentes base: `Botao`, `Campo`, `Card`, `Badge`, `Modal`, `Toast`, `Abas`
@@ -159,10 +185,21 @@ Ordem otimizada para o cenário de estreia: **você monta um curso de verdade o 
 - Tema por instituição: `--cor-primaria` sobrescrita em runtime após o login
 - Débitos 3.1 a 3.4
 
-### Fatia 1 — Painel do professor: cursos
-- `GET/POST/PATCH/DELETE /api/cursos`
+### Fatia 1 — Painel do professor: cursos ✅ CONCLUÍDA
+- `GET/POST/PATCH/DELETE /api/cursos` — **todas exigem papel staff**, inclusive as leituras
+  (curso não publicado é material em preparação; a listagem do aluno é rota separada, Fatia 4)
 - Listagem, criação, edição, publicar/despublicar
-- Upload de capa → Supabase Storage via URL assinada
+- `/api/auth/me`, login e onboarding devolvem o mesmo formato, com `instituicao` aninhada
+- Testes de isolamento multi-tenant, verificados removendo o filtro e confirmando a falha
+- ⏳ Upload de capa não foi feito (não estava no contrato desta fatia)
+
+### Fatia 2 — Editor de conteúdo ✅ CONCLUÍDA
+- CRUD e reordenação de módulos e aulas, isolamento via join até `cursos`
+- Bunny Stream: criação de vídeo + assinatura TUS; upload direto do browser
+- PDF: signed upload URL do Supabase Storage, no caminho `{instituicao_id}/aulas/{aula_id}/{arquivo}`
+- Webhook de encoding autenticado por segredo em query string, comparado em tempo constante
+
+
 
 ### Fatia 2 — Editor de conteúdo
 - Módulos: criar, renomear, reordenar, excluir
@@ -171,12 +208,40 @@ Ordem otimizada para o cenário de estreia: **você monta um curso de verdade o 
 - Upload de PDF → Supabase Storage
 - **Marco: você consegue montar um curso completo aqui.**
 
-### Fatia 3 — Alunos e ingresso
-- Migration `0009`
-- Modo *manual*: admin cadastra, senha provisória exibida na tela
-- Modo *convite*: envio por email (requer Resend — ver §6.3)
-- Modo *auto_aprovacao*: cadastro pela página pública + fila de moderação
-- Tela de gestão de alunos: listar, aprovar, recusar, matricular
+### Fatia 3 — Alunos e ingresso 🔄 EM ANDAMENTO
+- ✅ Migration `0009` (aplicada)
+- ✅ Backend: `GET/POST /api/alunos`, aprovar/recusar, matricular/desmatricular
+- 🔄 Frontend: tela de gestão de alunos
+- ⏳ Modo *convite*: envio por email (ver §6.3 — plano é funcionar sem Resend, logando o link em dev)
+- ⏳ Modo *auto_aprovacao*: cadastro pela página pública + configuração de `modo_ingresso`
+
+### Migration 0012 — bug de FK encontrado rodando o app
+`cursos.criado_por` e `convites.criado_por` referenciavam `usuarios(id)` sem `on delete`, o que
+**impedia remover um professor que tivesse criado qualquer curso** (o Supabase devolve apenas
+"Database error deleting user", sem indicar a causa). Corrigido com `on delete set null`.
+
+Nenhum teste pegaria isso: a suíte usa mocks e nunca exercita foreign key. Só apareceu ao rodar
+a aplicação de verdade contra o banco — argumento para manter o teste de fumaça ponta a ponta
+como parte dos gates, não só typecheck e unitários.
+
+### Decisões de ingresso (tomadas na Fatia 3B)
+
+- **Auto-cadastro sem barreira além de moderação.** Qualquer pessoa com o link `/i/{slug}` cria
+  conta `pendente`; o professor aprova ou recusa. Sem código de turma e sem rate limiting no MVP —
+  se aparecer spam, a saída é recusar em lote e desligar `modo_ingresso = auto_aprovacao`.
+- **Convite não permite escalonamento de privilégio**: `professor` só convida `aluno`; apenas
+  `admin_instituicao` convida `professor`/`admin_instituicao`. Sem isso, qualquer professor vira
+  admin convidando a si mesmo num segundo e-mail.
+- **E-mail degrada em vez de bloquear**: sem `RESEND_API_KEY`, o link do convite vai para o log do
+  servidor. Mesmo padrão da integração com a Bunny.
+
+### Convenção de orquestração: `server.ts` é do orquestrador
+
+`backend/src/server.ts` é o único arquivo que toda tarefa de backend precisa tocar (para registrar
+rotas), e por isso era o ponto de colisão que forçava serializar agentes que de resto são
+independentes. A partir da Fatia 3B: **agentes criam o arquivo de rotas e NÃO editam `server.ts`**;
+o orquestrador registra. Os testes não dependem disso — eles registram o plugin de rotas
+diretamente, não através do `server.ts`.
 
 ### Fatia 4 — Área do aluno
 - "Meus cursos", navegação módulo/aula
@@ -200,6 +265,85 @@ Ordem otimizada para o cenário de estreia: **você monta um curso de verdade o 
 - Migração do backend para Railway quando estabilizar
 
 ---
+
+## 5.1 Contrato da API (fonte da verdade)
+
+Registrado aqui porque a **ausência** deste contrato causou o defeito mais caro da orquestração:
+backend e frontend implementaram formatos de upload incompatíveis, com as duas suítes verdes.
+Antes de escrever qualquer rota nova, acrescente o formato exato aqui.
+
+API em camelCase, banco em snake_case, conversão na borda. Erros: `{ "erro": "..." }`.
+
+```
+# Cursos — todas exigem papel admin_instituicao|professor
+GET|POST        /api/cursos
+GET|PATCH|DELETE /api/cursos/:id
+
+# Módulos e aulas — idem
+GET|POST  /api/cursos/:cursoId/modulos      PUT /api/cursos/:cursoId/modulos/ordem  { ids }
+PATCH|DELETE /api/modulos/:id
+POST      /api/modulos/:moduloId/aulas      PUT /api/modulos/:moduloId/aulas/ordem  { ids }
+PATCH|DELETE /api/aulas/:id
+
+# Upload — dois protocolos DIFERENTES, deliberadamente não unificados
+POST /api/aulas/:id/video -> { videoId, libraryId, authorizationSignature,
+                               authorizationExpire, tusEndpoint }   # TUS, via tus-js-client
+POST /api/aulas/:id/pdf   -> { path, token, signedUrl }             # PUT simples
+     body: { nomeArquivo }
+
+POST /api/webhooks/bunny?token=<BUNNY_WEBHOOK_SECRET>               # sem sessão
+```
+
+Sessão (`/api/auth/me`, login e onboarding devolvem **o mesmo** objeto):
+```ts
+{ id, nome, papel, instituicaoId,
+  instituicao: { id, nome, slug, logoUrl, corPrimaria } | null }
+```
+
+## 5.2 O gate que encontra o que os testes não encontram
+
+`scripts/ciclo.sh` exercita o ciclo completo (professor monta curso → cadastra e matricula aluno →
+aluno entra, consome e marca progresso) contra o **Supabase real**, com duas instituições, e
+verifica isolamento nos dois papéis. Precisa dos servidores no ar, então não entra no
+`npm run verificar` — mas **rode antes de aprovar qualquer fatia que toque no banco**.
+
+Ele já encontrou dois bugs que nenhum dos 105 testes unitários pegaria, porque mock não tem
+foreign key nem RLS:
+
+1. **FKs de `criado_por` sem `on delete`** — impediam remover um professor que criou curso
+   (corrigido na migration `0012`).
+2. **Escrita em `usuarios` com o client errado** — `POST /api/alunos`, `aprovar` e `recusar`
+   estavam completamente inoperantes. A tabela `usuarios` tem RLS com policies **apenas de
+   SELECT** (decisão documentada no `0008`), então escrever com `supabaseComoUsuario` é sempre
+   negado. As três rotas tinham 100% de testes verdes.
+
+**A regra que sai disso:** typecheck, lint e teste com mock provam consistência interna, não
+funcionamento. Toda escrita em tabela sem policy correspondente é invisível para eles.
+
+### Qual client usar em cada tabela
+
+**Antes de escrever qualquer query, confira esta tabela.** A regra "use sempre
+`supabaseComoUsuario`" é falsa, e acreditar nela já produziu dois bugs que passaram por todos os
+testes: escrita em `usuarios` e leitura de quiz pelo aluno.
+
+| Tabela | Quem | Client | Porquê |
+|---|---|---|---|
+| `usuarios` | leitura | `supabaseComoUsuario` | `usuarios_select_propria_instituicao` + `_propria_linha` |
+| `usuarios` | **escrita** | **`supabaseAdmin`** | **Não há policy de insert/update** (`0008`) |
+| `instituicoes` | tudo | `supabaseComoUsuario` | `instituicoes_select_publico` + `_update_admin` |
+| `cursos`, `modulos`, `aulas`, `matriculas`, `progresso_aulas`, `convites` | tudo | `supabaseComoUsuario` | Policies de CRUD existem |
+| `quizzes`, `quiz_perguntas`, `quiz_alternativas`, `quiz_tentativas` | staff | `supabaseComoUsuario` | `_crud_staff` existe |
+| `quizzes`, `quiz_perguntas`, `quiz_alternativas`, `quiz_tentativas` | **aluno** | **`supabaseAdmin`** | **Não há policy de select para aluno** — deliberado, para o gabarito não ser legível via anon key (`0008`, linha 254) |
+| `certificados` | público | `supabaseAdmin` | Rota de validação não tem sessão |
+
+Toda query com `supabaseAdmin` **precisa** carregar o filtro manual explícito (`instituicao_id`,
+`aluno_id` ou `matricula_id`, conforme o caso) — ali o filtro é a **única** proteção, porque o RLS
+foi contornado. Nas rotas de quiz do aluno, a seleção explícita de colunas é o que impede o
+gabarito de vazar; não relaxe para `select("*")`.
+
+**Como descobrir sem errar:** abra `0008_rls_policies.sql` e procure a policy correspondente ao
+papel e à operação. Se não existir, é `supabaseAdmin` — e isso é uma decisão de schema, não um
+descuido.
 
 ## 6. Riscos e armadilhas conhecidas
 

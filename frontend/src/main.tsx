@@ -4,12 +4,15 @@ import { BrowserRouter } from 'react-router-dom'
 import './index.css'
 import App from './App.tsx'
 import { SessaoProvider } from './features/auth/SessaoContext.tsx'
+import { ToastProvider } from './components/Toast.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <SessaoProvider>
-        <App />
+        <ToastProvider>
+          <App />
+        </ToastProvider>
       </SessaoProvider>
     </BrowserRouter>
   </StrictMode>,

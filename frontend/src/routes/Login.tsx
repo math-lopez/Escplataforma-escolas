@@ -1,6 +1,9 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useSessao } from "../features/auth/useSessao";
+import { Botao } from "../components/Botao";
+import { Campo } from "../components/Campo";
+import { Card } from "../components/Card";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -16,8 +19,10 @@ export default function Login() {
     setCarregando(true);
 
     try {
-      await entrar(email, senha);
-      navigate("/");
+      const usuario = await entrar(email, senha);
+      // Staff (admin/professor) trabalha a partir da lista de cursos; aluno
+      // ainda não tem área própria nesta fatia, fica na home.
+      navigate(usuario.papel === "aluno" ? "/" : "/cursos");
     } catch (error) {
       setErro(error instanceof Error ? error.message : "Erro inesperado");
     } finally {
@@ -26,22 +31,47 @@ export default function Login() {
   }
 
   return (
-    <main>
-      <h1>Entrar</h1>
-      <form onSubmit={handleSubmit}>
-        <label>
-          E-mail
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        </label>
-        <label>
-          Senha
-          <input type="password" value={senha} onChange={(e) => setSenha(e.target.value)} required />
-        </label>
-        {erro && <p role="alert">{erro}</p>}
-        <button type="submit" disabled={carregando}>
-          {carregando ? "Entrando..." : "Entrar"}
-        </button>
-      </form>
+    <main className="flex min-h-screen items-center justify-center bg-surface-soft px-base py-xxl">
+      <Card className="flex w-full max-w-[420px] flex-col gap-lg">
+        <div className="flex flex-col gap-xxs text-center">
+          <h1 className="text-heading-lg text-ink-deep">Entrar</h1>
+          <p className="text-body-sm text-steel">Acesse sua conta na Plataforma Escolas.</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-base" noValidate>
+          <Campo
+            rotulo="E-mail"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+            required
+          />
+          <Campo
+            rotulo="Senha"
+            type="password"
+            value={senha}
+            onChange={(e) => setSenha(e.target.value)}
+            autoComplete="current-password"
+            required
+          />
+          {erro && (
+            <p role="alert" className="text-body-sm text-critical-strong">
+              {erro}
+            </p>
+          )}
+          <Botao type="submit" variante="primary" disabled={carregando} className="w-full">
+            {carregando ? "Entrando..." : "Entrar"}
+          </Botao>
+        </form>
+
+        <p className="text-center text-body-sm text-steel">
+          Ainda não tem uma instituição?{" "}
+          <Link to="/cadastro-instituicao" className="text-link-md text-primary">
+            Criar instituição
+          </Link>
+        </p>
+      </Card>
     </main>
   );
 }

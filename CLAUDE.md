@@ -20,7 +20,7 @@ frontend/src/
   features/     # lógica de domínio (auth/, cursos/, aulas/, matriculas/...)
 backend/src/
   lib/          # sessao.ts (cookies httpOnly)
-  plugins/      # supabase.ts (clients admin + auth), auth.ts (sessão/refresh/papéis)
+  plugins/      # supabase.ts (clients admin, auth e comoUsuario), auth.ts (sessão/refresh/papéis)
   routes/       # endpoints Fastify
   services/     # lógica de negócio
 supabase/migrations/   # SQL sequencial, numerado (0001_, 0002_...)
@@ -42,12 +42,14 @@ O backend abstrai tudo que é infraestrutura (banco, auth, storage), o que mant�
 ## Contrato de autenticação
 
 - **Sessão em cookie httpOnly**, emitida pelo backend (`backend/src/lib/sessao.ts`). O token nunca é exposto ao JavaScript do frontend — não há token em `localStorage` nem header `Authorization`. O front só usa `credentials: "include"` (já embutido no `api.ts`).
+- **Validação de token é local** (`backend/src/plugins/auth.ts`, função `idDoToken`): usamos `getClaims(token)` para extrair o `sub` (id do usuário) das claims JWT, com JWKS cacheado — isso é **0–1ms por requisição** contra 147–381ms de uma ida de rede a `getUser()`. O trade-off: um token revogado é aceito até expirar (tempo de vida típico: 1h), mitigado pelo reload do perfil a cada requisição, que detecta usuário apagado ou desativado no mesmo instante.
 - **Endpoints de auth** (`backend/src/routes/auth.ts`): `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`. O backend chama o Supabase Auth internamente com a anon key.
 - **Onboarding de instituição**: `POST /api/instituicoes/onboarding` cria instituição + usuário admin (service role via Admin API) e já devolve o usuário autenticado, com o cookie setado.
 - **Refresh transparente**: o plugin `backend/src/plugins/auth.ts` renova a sessão automaticamente pelo refresh token quando o access token expira. O frontend não sabe que isso existe.
-- **Autorização nas rotas**: `fastify.autenticar` (exige sessão) e `fastify.exigirPapel('professor', 'admin_instituicao')` como `onRequest`. Ambos populam `request.usuario = { id, instituicaoId, papel, nome }`.
-- **Isolamento multi-tenant é responsabilidade do backend**: como ele usa a service role key (que ignora RLS), toda query **precisa filtrar explicitamente por `request.usuario.instituicaoId`**. Nunca aceitar `instituicao_id` vindo do corpo/query da requisição.
-- **RLS continua habilitado como defesa em profundidade** — segunda barreira caso a service role key vaze ou algum acesso direto ao banco aconteça. Não é mais o caminho principal de acesso, mas não deve ser removido.
+- **Autorização nas rotas**: `fastify.autenticar` (exige sessão) e `fastify.exigirPapel('professor', 'admin_instituicao')` como `onRequest`. Ambos populam `request.usuario = { id, instituicaoId, papel, nome, status }` e `request.accessToken` (o access token válido da requisição — o do cookie, ou o novo emitido caso tenha havido refresh).
+- **Usuário pendente/recusado** (`usuarios.status`, migration 0009): `fastify.autorizarPerfil` é o ponto único que decide isso — usado tanto por `autenticar` quanto pelo login, para as duas rotas nunca divergirem na mesma regra. Sem perfil na tabela `usuarios` → 401. Perfil existe mas `status != 'ativo'` → **403** (não 401) com `{ erro, codigo: "cadastro_pendente" | "cadastro_recusado", nome }`, **sem limpar os cookies**: a sessão é legítima, falta é aprovação, e a mesma sessão deve passar a funcionar sozinha quando um admin aprovar — deslogar forçaria login de novo à toa.
+- **Qual client Supabase usar (`backend/src/plugins/supabase.ts`)**: toda rota de negócio usa `fastify.supabaseComoUsuario(request.accessToken)` — anon key + token do usuário, o que faz o **RLS voltar a valer** como linha de defesa real, não só teórica. `fastify.supabaseAdmin` (service role, ignora RLS) fica restrito a onboarding, criação de usuário e operações que legitimamente cruzam instituições; um guard em `backend/tests/` falha o build se alguma rota fora dessa allowlist usar `supabaseAdmin`. `fastify.supabaseAuth` é só para as próprias operações de auth (login, refresh).
+- **Isolamento multi-tenant tem duas camadas**: o filtro manual por `request.usuario.instituicaoId` em toda query (nunca aceitar `instituicao_id` vindo do corpo/query da requisição) **e** o RLS, ativo de verdade porque as rotas usam `supabaseComoUsuario`. Um esquecimento no filtro manual não vaza dado entre tenants — o RLS barra na mesma hora.
 - No frontend, a sessão é consumida via `useSessao()` (`frontend/src/features/auth/`), que consulta `GET /api/auth/me` — única forma de saber se há sessão, já que o cookie é httpOnly.
 
 ## Como rodar em dev
